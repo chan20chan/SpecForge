@@ -1,0 +1,69 @@
+# volc ml_task submission for the SpecForge online DSpark recipe on
+# Qwen3.6-27B (examples/configs/qwen3.6-27b-dspark-online.yaml).
+#
+#   volc ml_task submit -c scripts/volc/volc_task.yaml
+#
+# Single node: GPU 0 serves the patched SGLang capture server, GPU 1 runs the
+# one-rank trainer (the recipe keeps global batch 512 via 512 microbatches).
+# The remaining GPUs of the flavor stay idle; the queue has no smaller flavor
+# with 80GB devices, which the tp1 27B bf16 server requires.
+TaskName: "specforge_qwen36_27b_dspark_online"
+Description: "SpecForge DSpark draft training on Qwen3.6-27B, online disaggregated"
+Tags: []
+
+# Code is read straight off the vePFS mount below rather than uploaded, so the
+# venv under toolchain/ and the absolute model/data paths resolve unchanged.
+UserCodePath: ""
+RemoteMountCodePath: ""
+Entrypoint: "bash /root/songxianzheng/jiaomingyang/code/SpecForge/scripts/volc/volc_entrypoint.sh"
+Envs:
+    - Name: "CONFIG_PATH"
+      Value: "examples/configs/qwen3.6-27b-dspark-online.yaml"
+      IsPrivate: false
+    # The YAML records the HF id; task nodes have no egress, so point at the
+    # vePFS copy of the target weights.
+    - Name: "TARGET_MODEL_PATH"
+      Value: "/root/songxianzheng/models/Qwen3.6-27B"
+      IsPrivate: false
+    # The recipe's cache/dataset/nemotron_v2_train.jsonl does not exist and
+    # prepare_data.py cannot produce it; reuse the DeepSpec Qwen3.6-27B
+    # regenerated dataset, which is the same conversation JSONL schema.
+    - Name: "TRAIN_DATA_PATH"
+      Value: "/root/songxianzheng/jiaomingyang/code/DeepSpec/train_datasets/qwen36_27b/perfectblend_train_regen.jsonl"
+      IsPrivate: false
+    - Name: "NCCL_DEBUG"
+      Value: "WARN"
+      IsPrivate: false
+
+# aiplatform-SPEECH: same project as the vePFS mounted below; it holds
+# 13 ml.hpcpni2l.28xlarge nodes plus 7 ml.gni3.3xlarge.
+ResourceQueueID: "q-20250227193119-fjpbk"
+Framework: "PyTorchDDP"
+TaskRoleSpecs:
+    - RoleName: "worker"
+      RoleReplicas: 1
+      Flavor: "ml.hpcpni2l.28xlarge"
+
+# The venv on vePFS owns Python 3.11, torch 2.11+cu130, and sglang. The image
+# is only the Ubuntu 24.04 + NVIDIA-runtime board: glibc new enough for those
+# wheels, CUDA 13 userspace closer to the venv than the old cu12.9 pytorch
+# preset (whose torch/python were unused). Host driver 535 still comes from
+# the node; cuda-compat-13-3 remains required.
+ImageUrl: "vemlp-cn-beijing.cr.volces.com/preset-images/cuda:13.0.3-py3.11-ubuntu24.04"
+
+Storages:
+    - Type: "Vepfs"
+      MountPath: "/root/songxianzheng"
+      VepfsId: "vepfs-cnbjc90fab4fcf40"
+      SubPath: "aiplatform-speech/users/songxianzheng"
+
+ActiveDeadlineSeconds: 864000
+EnableTensorBoard: false
+AccessType: "Public"
+Priority: 4
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 5
+    IntervalSeconds: 120
+    PolicySets: []
+    EnableReserveResourceOnRetry: false
